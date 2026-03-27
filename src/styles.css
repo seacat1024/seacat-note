@@ -70,13 +70,13 @@ button.primary { background: #2f6bff; border-color: #2f6bff; color: white; }
 .note-type-badge { font-size: 12px; color: #98a2b3; white-space: nowrap; margin-left: auto; flex-shrink: 0; }
 .editor-toolbar { display: flex; gap: 6px; padding: 8px 12px; border-bottom: 1px solid #eceef5; align-items: center; flex-wrap: wrap; }
 .editor-meta { display: flex; gap: 12px; padding: 6px 12px; border-bottom: 1px solid #eceef5; font-size: 12px; color: #6b7280; flex-wrap: wrap; }
-.editor-content { flex: 1; padding: 12px 14px; overflow: auto; outline: none; font-size: 15px; line-height: 1.5; }
+.editor-content { flex: 1; padding: 12px 14px; overflow: auto; outline: none; font-size: 15px; line-height: 1.65; }
 .editor-content[contenteditable="false"] { cursor: default; background: #fffef7; }
 
 .toolbar-select { height: 28px; border: 1px solid #d9dfeb; border-radius: 7px; padding: 0 8px; background: white; font-size: 12px; color: #475467; }
 .toolbar-select-sm { min-width: 72px; }
 .toolbar-select-size { width: 58px; }
-.toolbar-select-line-height { width: 64px; }
+.toolbar-select-lineheight { min-width: 88px; }
 .toolbar-divider { width: 1px; height: 18px; background: #e5e7eb; margin: 0 2px; }
 .editor-toolbar button { width: 28px; min-width: 28px; padding: 0; display: inline-flex; align-items: center; justify-content: center; color: #475467; }
 .editor-toolbar button:hover { background: #f4f6fb; }

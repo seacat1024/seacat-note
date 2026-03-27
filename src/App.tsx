@@ -12,8 +12,6 @@ type Folder = {
 
 type NoteType = 'rich_text' | 'markdown' | 'mind_map'
 
-const LINE_HEIGHT_OPTIONS = ['1.0', '1.15', '1.5', '1.7', '2.0', '2.5', '3.0'] as const
-
 type Note = {
   id: string
   folderId: string
@@ -159,10 +157,11 @@ export default function App() {
   const searchInputRef = useRef<HTMLInputElement | null>(null)
   const titleInputRef = useRef<HTMLInputElement | null>(null)
   const editorContentRef = useRef<HTMLDivElement | null>(null)
-  const savedEditorRangeRef = useRef<Range | null>(null)
   const vaultEditorRef = useRef<HTMLDivElement | null>(null)
   const tableMenuCellRef = useRef<HTMLTableCellElement | null>(null)
   const fileInputRef = useRef<HTMLInputElement | null>(null)
+  const savedEditorRangeRef = useRef<Range | null>(null)
+  const savedEditorSelectionOffsetsRef = useRef<{ start: number; end: number } | null>(null)
   const [formatBrush, setFormatBrush] = useState<null | { bold: boolean; italic: boolean; underline: boolean; strike: boolean; foreColor: string; backColor: string; fontName: string; fontSize: string }>(null)
   const [selectedImageEl, setSelectedImageEl] = useState<HTMLImageElement | null>(null)
   const [tableMenu, setTableMenu] = useState<{ x: number; y: number } | null>(null)
@@ -356,134 +355,280 @@ function updateSettings<K extends keyof AppSettings>(key: K, value: AppSettings[
     }
   }, [vaultStatus.unlocked, vaultLastActive])
 
-  function captureEditorSelection() {
-    const root = activeEditorRoot()
-    const selection = window.getSelection()
-    if (!root || !selection || !selection.rangeCount) return
-    const range = selection.getRangeAt(0)
-    if (!root.contains(range.commonAncestorContainer)) return
-    savedEditorRangeRef.current = range.cloneRange()
-  }
-
-  function restoreEditorSelection() {
-    const root = activeEditorRoot()
-    const savedRange = savedEditorRangeRef.current
-    if (!root || !savedRange) return false
-    root.focus()
-    const selection = window.getSelection()
-    if (!selection) return false
-    selection.removeAllRanges()
-    selection.addRange(savedRange)
-    return true
-  }
-
   function execEditorCommand(command: string, value?: string) {
     restoreEditorSelection()
     document.execCommand('styleWithCSS', false, 'true')
     document.execCommand(command, false, value)
-    captureEditorSelection()
+    saveEditorSelection()
+    void persistActiveEditor()
+    queueEditorSelectionRestore()
   }
 
-  function normalizeFontSizeTags(px: number) {
-    const root = activeEditorRoot()
-    if (!root) return
-    root.querySelectorAll('font[size="7"]').forEach((node) => {
-      const el = node as HTMLElement
-      el.style.fontSize = `${px}px`
-      el.removeAttribute('size')
-    })
-    root.querySelectorAll('span').forEach((node) => {
-      const el = node as HTMLElement
-      const fontSize = (el.style.fontSize || '').trim().toLowerCase()
-      if ([
-        'xxx-large',
-        'xx-large',
-        'x-large',
-        'larger',
-        '-webkit-xxx-large',
-        '-webkit-xx-large',
-        '-webkit-x-large',
-      ].includes(fontSize)) {
-        el.style.fontSize = `${px}px`
+  function selectionInsideRoot(range: Range, root: HTMLElement) {
+    return root.contains(range.commonAncestorContainer)
+  }
+
+  function computeRangeOffsets(root: HTMLElement, range: Range) {
+    const startRange = document.createRange()
+    startRange.selectNodeContents(root)
+    startRange.setEnd(range.startContainer, range.startOffset)
+    const start = startRange.toString().length
+
+    const endRange = document.createRange()
+    endRange.selectNodeContents(root)
+    endRange.setEnd(range.endContainer, range.endOffset)
+    const end = endRange.toString().length
+
+    return { start, end }
+  }
+
+  function resolveTextPositionFromOffset(root: HTMLElement, targetOffset: number) {
+    const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT)
+    let currentOffset = 0
+    let lastTextNode: Text | null = null
+
+    while (walker.nextNode()) {
+      const node = walker.currentNode as Text
+      lastTextNode = node
+      const len = node.textContent?.length ?? 0
+      if (targetOffset <= currentOffset + len) {
+        return { node, offset: Math.max(0, targetOffset - currentOffset) }
       }
+      currentOffset += len
+    }
+
+    if (lastTextNode) {
+      return { node: lastTextNode, offset: lastTextNode.textContent?.length ?? 0 }
+    }
+
+    return { node: root, offset: root.childNodes.length }
+  }
+
+  function syncSavedSelection(range: Range) {
+    const root = activeEditorRoot()
+    if (!root || !selectionInsideRoot(range, root)) return
+    savedEditorRangeRef.current = range.cloneRange()
+    try {
+      savedEditorSelectionOffsetsRef.current = computeRangeOffsets(root, range)
+    } catch {}
+  }
+
+  function saveEditorSelection() {
+    const root = activeEditorRoot()
+    const sel = window.getSelection()
+    if (!root || !sel || sel.rangeCount === 0) return
+    const range = sel.getRangeAt(0)
+    if (!selectionInsideRoot(range, root)) return
+    syncSavedSelection(range)
+  }
+
+  function restoreEditorSelection() {
+    const root = activeEditorRoot()
+    const sel = window.getSelection()
+    if (!root || !sel) return
+    root.focus()
+
+    const offsets = savedEditorSelectionOffsetsRef.current
+    if (offsets) {
+      try {
+        const startPos = resolveTextPositionFromOffset(root, offsets.start)
+        const endPos = resolveTextPositionFromOffset(root, offsets.end)
+        const next = document.createRange()
+        next.setStart(startPos.node, startPos.offset)
+        next.setEnd(endPos.node, endPos.offset)
+        sel.removeAllRanges()
+        sel.addRange(next)
+        savedEditorRangeRef.current = next.cloneRange()
+        return
+      } catch {}
+    }
+
+    const saved = savedEditorRangeRef.current
+    if (!saved) return
+    try {
+      sel.removeAllRanges()
+      sel.addRange(saved)
+    } catch {}
+  }
+
+  function queueEditorSelectionRestore() {
+    window.requestAnimationFrame(() => {
+      restoreEditorSelection()
     })
+  }
+
+  function preventToolbarMouseDown(e: React.MouseEvent<HTMLElement>) {
+    e.preventDefault()
+    restoreEditorSelection()
+  }
+
+  function rememberEditorSelectionBeforeToolbarFocus(_: React.MouseEvent<HTMLElement>) {
+    saveEditorSelection()
+  }
+
+  function closestEditableBlock(node: Node | null, root: HTMLElement): HTMLElement {
+    let current: Node | null = node
+    while (current && current !== root) {
+      if (current instanceof HTMLElement) {
+        const display = window.getComputedStyle(current).display
+        if (display === 'block' || current.tagName === 'P' || current.tagName === 'DIV' || /^H[1-6]$/.test(current.tagName) || current.tagName === 'LI') {
+          return current
+        }
+      }
+      current = current.parentNode
+    }
+    return root
+  }
+
+  function closestStyleTarget(node: Node | null, root: HTMLElement): HTMLElement {
+    let current: Node | null = node
+    while (current && current !== root) {
+      if (current instanceof HTMLElement && current !== root) {
+        if (current.tagName !== 'BR') return current
+      }
+      current = current.parentNode
+    }
+    return closestEditableBlock(node, root)
+  }
+
+  function preferredFullLineTarget(block: HTMLElement, selectedText: string) {
+    const onlyChild = block.childNodes.length === 1 ? block.firstChild : null
+    if (onlyChild instanceof HTMLElement && (onlyChild.textContent?.trim() || '') === selectedText) {
+      return onlyChild
+    }
+    return block
+  }
+
+  function resolveCaretToDeepestTextEnd(node: Node | null): { node: Node; offset: number } | null {
+    if (!node) return null
+    if (node.nodeType === Node.TEXT_NODE) {
+      return { node, offset: node.textContent?.length ?? 0 }
+    }
+    let current: Node | null = node
+    while (current && current.lastChild) {
+      current = current.lastChild
+    }
+    if (!current) return null
+    if (current.nodeType === Node.TEXT_NODE) {
+      return { node: current, offset: current.textContent?.length ?? 0 }
+    }
+    return { node: current, offset: current.childNodes.length }
+  }
+
+  function setCaretAtRangeEnd(range: Range) {
+    const sel = window.getSelection()
+    if (!sel) return
+    const next = range.cloneRange()
+    const endContainer = next.endContainer
+    const resolved = resolveCaretToDeepestTextEnd(endContainer.nodeType === Node.ELEMENT_NODE ? (endContainer as Element).lastChild ?? endContainer : endContainer)
+    if (resolved) {
+      try {
+        next.setStart(resolved.node, resolved.offset)
+        next.collapse(true)
+      } catch {
+        next.collapse(false)
+      }
+    } else {
+      next.collapse(false)
+    }
+    sel.removeAllRanges()
+    sel.addRange(next)
+    syncSavedSelection(next)
+  }
+
+  function cleanupEmptyStyleAttr(el: HTMLElement) {
+    const styleText = (el.getAttribute('style') || '').trim()
+    if (!styleText) el.removeAttribute('style')
+  }
+
+  function clearFontSizingWithin(rootNode: ParentNode) {
+    if (!(rootNode as ParentNode).querySelectorAll) return
+    const all = Array.from((rootNode as ParentNode).querySelectorAll('*'))
+    for (const node of all) {
+      if (!(node instanceof HTMLElement)) continue
+      if (node.style.fontSize) {
+        node.style.removeProperty('font-size')
+        cleanupEmptyStyleAttr(node)
+      }
+      if (node.tagName === 'FONT' && node.hasAttribute('size')) {
+        node.removeAttribute('size')
+      }
+    }
+  }
+
+  function stripOwnFontSize(el: HTMLElement) {
+    if (el.style.fontSize) {
+      el.style.removeProperty('font-size')
+      cleanupEmptyStyleAttr(el)
+    }
+    if (el.tagName === 'FONT' && el.hasAttribute('size')) {
+      el.removeAttribute('size')
+    }
+  }
+
+  function applyInlineStyleToRange(range: Range, styleName: 'fontSize' | 'lineHeight', value: string) {
+    const fragment = range.extractContents()
+    if (styleName === 'fontSize') {
+      clearFontSizingWithin(fragment)
+    }
+    const span = document.createElement('span')
+    span.style[styleName] = value
+    span.appendChild(fragment)
+    range.insertNode(span)
+    const next = document.createRange()
+    next.selectNodeContents(span)
+    setCaretAtRangeEnd(next)
+  }
+
+  function applyBlockStyle(styleName: 'fontSize' | 'lineHeight', value: string) {
+    restoreEditorSelection()
+    const root = activeEditorRoot()
+    const sel = window.getSelection()
+    if (!root || !sel || sel.rangeCount === 0) return
+    const range = sel.getRangeAt(0)
+    if (!selectionInsideRoot(range, root)) return
+
+    const startBlock = closestEditableBlock(range.startContainer, root)
+    const endBlock = closestEditableBlock(range.endContainer, root)
+    const selectedText = sel.toString().trim()
+    const startText = startBlock.textContent?.trim() || ''
+    const sameBlock = startBlock === endBlock
+
+    if (range.collapsed) {
+      const target = closestStyleTarget(range.startContainer, root)
+      if (styleName === 'fontSize') {
+        stripOwnFontSize(target)
+        clearFontSizingWithin(target)
+      }
+      target.style[styleName] = value
+      const next = document.createRange()
+      next.selectNodeContents(target)
+      setCaretAtRangeEnd(next)
+    } else if (sameBlock && selectedText && selectedText === startText) {
+      const target = preferredFullLineTarget(startBlock, selectedText)
+      if (styleName === 'fontSize') {
+        stripOwnFontSize(target)
+        clearFontSizingWithin(target)
+      }
+      target.style[styleName] = value
+      const next = document.createRange()
+      next.selectNodeContents(target)
+      setCaretAtRangeEnd(next)
+    } else {
+      applyInlineStyleToRange(range, styleName, value)
+    }
+
+    saveEditorSelection()
+    void persistActiveEditor()
+    queueEditorSelectionRestore()
   }
 
   function applyFontSize(px: number) {
-    execEditorCommand('fontSize', '7')
-    normalizeFontSizeTags(px)
-    captureEditorSelection()
-    void persistActiveEditor()
+    applyBlockStyle('fontSize', `${px}px`)
   }
 
-  function isEditorBlockElement(el: HTMLElement) {
-    return /^(P|DIV|LI|BLOCKQUOTE|H1|H2|H3|H4|H5|H6|TD|TH|PRE)$/.test(el.tagName)
-  }
-
-  function findEditorBlock(node: Node | null, root: HTMLElement) {
-    let current: Node | null = node
-    while (current && current !== root) {
-      if (current instanceof HTMLElement && isEditorBlockElement(current)) return current
-      current = current.parentNode
-    }
-    return null
-  }
-
-  function collectBlocksInRange(root: HTMLElement, range: Range) {
-    const blocks: HTMLElement[] = []
-    const walker = document.createTreeWalker(root, NodeFilter.SHOW_ELEMENT, {
-      acceptNode(node) {
-        if (!(node instanceof HTMLElement)) return NodeFilter.FILTER_SKIP
-        if (!isEditorBlockElement(node)) return NodeFilter.FILTER_SKIP
-        return range.intersectsNode(node) ? NodeFilter.FILTER_ACCEPT : NodeFilter.FILTER_SKIP
-      },
-    })
-    while (walker.nextNode()) {
-      blocks.push(walker.currentNode as HTMLElement)
-    }
-    return blocks
-  }
-
-  function collectAllEditorBlocks(root: HTMLElement) {
-    const blocks: HTMLElement[] = []
-    root.querySelectorAll('p,div,li,blockquote,h1,h2,h3,h4,h5,h6,td,th,pre').forEach((node) => {
-      if (node instanceof HTMLElement) blocks.push(node)
-    })
-    return blocks
-  }
-
-  function applyLineHeight(value: string) {
-    const root = activeEditorRoot()
-    if (!root) return
-    restoreEditorSelection()
-    root.focus()
-    const selection = window.getSelection()
-    const range = selection && selection.rangeCount ? selection.getRangeAt(0) : null
-    const blockMap = new Map<HTMLElement, true>()
-    if (range && root.contains(range.commonAncestorContainer)) {
-      if (range.collapsed) {
-        const currentBlock = findEditorBlock(range.startContainer, root)
-        if (currentBlock) blockMap.set(currentBlock, true)
-      } else {
-        collectBlocksInRange(root, range).forEach((block) => blockMap.set(block, true))
-      }
-    }
-    if (!blockMap.size) {
-      collectAllEditorBlocks(root).forEach((block) => blockMap.set(block, true))
-    }
-    if (!blockMap.size) {
-      execEditorCommand('formatBlock', 'p')
-      const fallbackSelection = window.getSelection()
-      const fallbackRange = fallbackSelection && fallbackSelection.rangeCount ? fallbackSelection.getRangeAt(0) : null
-      if (fallbackRange && root.contains(fallbackRange.commonAncestorContainer)) {
-        const currentBlock = findEditorBlock(fallbackRange.startContainer, root)
-        if (currentBlock) blockMap.set(currentBlock, true)
-      }
-    }
-    blockMap.forEach((_v, block) => {
-      block.style.lineHeight = value
-    })
-    void persistActiveEditor()
+  function applyLineHeight(val: number) {
+    applyBlockStyle('lineHeight', String(val))
   }
 
   function currentEditorSelectionText() {
@@ -1784,12 +1929,12 @@ ${result.filePath}`)
               <>
                 <div className="title-bar">{editingTitle ? <input ref={titleInputRef} className="title-input-inline" defaultValue={selectedNote.title} onBlur={(e) => { setEditingTitle(false); void updateSelectedTitle(e.currentTarget.value.trim()) }} onKeyDown={(e) => { if (e.key === 'Enter') { setEditingTitle(false); void updateSelectedTitle((e.target as HTMLInputElement).value.trim()) } if (e.key === 'Escape') setEditingTitle(false) }} /> : <div className="title-text" onClick={() => setEditingTitle(true)}>{selectedNote.title}</div>}<span className="note-type-badge">{noteTypeLabel(selectedNote.noteType)}</span></div>
                 {selectedNote.noteType !== 'mind_map' ? <div className="editor-toolbar">
-                  <select className="toolbar-select toolbar-select-sm" defaultValue="paragraph" onChange={(e) => { const v = e.target.value; if (v === 'paragraph') execEditorCommand('formatBlock', 'p'); if (v === 'h2') execEditorCommand('formatBlock', 'h2'); if (v === 'blockquote') execEditorCommand('formatBlock', 'blockquote'); e.currentTarget.value = v }}>
+                  <select onMouseDownCapture={rememberEditorSelectionBeforeToolbarFocus} className="toolbar-select toolbar-select-sm" defaultValue="paragraph" onChange={(e) => { const v = e.target.value; if (v === 'paragraph') execEditorCommand('formatBlock', 'p'); if (v === 'h2') execEditorCommand('formatBlock', 'h2'); if (v === 'blockquote') execEditorCommand('formatBlock', 'blockquote'); e.currentTarget.value = v }}>
                     <option value="paragraph">正文</option>
                     <option value="h2">H2</option>
                     <option value="blockquote">引用</option>
                   </select>
-                  <select className="toolbar-select" defaultValue="" onChange={(e) => { if (e.target.value) execEditorCommand('fontName', e.target.value) }}>
+                  <select onMouseDownCapture={rememberEditorSelectionBeforeToolbarFocus} className="toolbar-select" defaultValue="" onChange={(e) => { if (e.target.value) execEditorCommand('fontName', e.target.value) }}>
                     <option value="">默认字体</option>
                     <option value="PingFang SC">苹方</option>
                     <option value="Microsoft YaHei">微软雅黑</option>
@@ -1797,34 +1942,34 @@ ${result.filePath}`)
                     <option value="SimHei">黑体</option>
                     <option value="monospace">等宽</option>
                   </select>
-                  <select className="toolbar-select toolbar-select-size" defaultValue="16" onChange={(e) => applyFontSize(Number(e.target.value))}>
+                  <select onMouseDownCapture={rememberEditorSelectionBeforeToolbarFocus} className="toolbar-select toolbar-select-size" defaultValue="16" onChange={(e) => applyFontSize(Number(e.target.value))}>
                     {[12, 14, 16, 18, 22, 26, 30, 36].map((size) => <option key={size} value={size}>{size}</option>)}
                   </select>
-                  <select className="toolbar-select toolbar-select-line-height" defaultValue="1.5" onChange={(e) => applyLineHeight(e.target.value)}>
-                    {LINE_HEIGHT_OPTIONS.map((lineHeight) => <option key={lineHeight} value={lineHeight}>{lineHeight}</option>)}
+                  <select onMouseDownCapture={rememberEditorSelectionBeforeToolbarFocus} className="toolbar-select toolbar-select-lineheight" defaultValue="1.5" onChange={(e) => applyLineHeight(Number(e.target.value))}>
+                    {[1, 1.15, 1.5, 1.7, 2, 2.5, 3].map((val) => <option key={String(val)} value={val}>{`行距 ${val}`}</option>)}
                   </select>
                   <span className="toolbar-divider"></span>
-                  <button title="加粗" onClick={() => execEditorCommand('bold')}><strong>B</strong></button>
-                  <button title="斜体" onClick={() => execEditorCommand('italic')}><em>I</em></button>
-                  <button title="下划线" onClick={() => execEditorCommand('underline')}><span className="toolbar-under">U</span></button>
-                  <button title="删除线" onClick={() => execEditorCommand('strikeThrough')}><span className="toolbar-strike">S</span></button>
+                  <button onMouseDown={preventToolbarMouseDown} title="加粗" onClick={() => execEditorCommand('bold')}><strong>B</strong></button>
+                  <button onMouseDown={preventToolbarMouseDown} title="斜体" onClick={() => execEditorCommand('italic')}><em>I</em></button>
+                  <button onMouseDown={preventToolbarMouseDown} title="下划线" onClick={() => execEditorCommand('underline')}><span className="toolbar-under">U</span></button>
+                  <button onMouseDown={preventToolbarMouseDown} title="删除线" onClick={() => execEditorCommand('strikeThrough')}><span className="toolbar-strike">S</span></button>
                   <input className="toolbar-color" title="文字颜色" type="color" onChange={(e) => execEditorCommand('foreColor', e.target.value)} defaultValue="#1f2937" />
                   <input className="toolbar-color" title="高亮颜色" type="color" onChange={(e) => execEditorCommand('hiliteColor', e.target.value)} defaultValue="#fff2a8" />
                   <span className="toolbar-divider"></span>
-                  <button title="无序列表" onClick={() => execEditorCommand('insertUnorderedList')}>•</button>
-                  <button title="有序列表" onClick={() => execEditorCommand('insertOrderedList')}>1.</button>
-                  <button title="左对齐" onClick={() => execEditorCommand('justifyLeft')}>≡</button>
-                  <button title="居中" onClick={() => execEditorCommand('justifyCenter')}>≣</button>
-                  <button title="右对齐" onClick={() => execEditorCommand('justifyRight')}>≢</button>
-                  <button title="分割线" onClick={() => execEditorCommand('insertHorizontalRule')}>—</button>
-                  <button title="插入表格" onClick={() => insertBasicTable()}>▦</button>
-                  <button title="选择图片" onClick={() => fileInputRef.current?.click()}>🖼</button>
+                  <button onMouseDown={preventToolbarMouseDown} title="无序列表" onClick={() => execEditorCommand('insertUnorderedList')}>•</button>
+                  <button onMouseDown={preventToolbarMouseDown} title="有序列表" onClick={() => execEditorCommand('insertOrderedList')}>1.</button>
+                  <button onMouseDown={preventToolbarMouseDown} title="左对齐" onClick={() => execEditorCommand('justifyLeft')}>≡</button>
+                  <button onMouseDown={preventToolbarMouseDown} title="居中" onClick={() => execEditorCommand('justifyCenter')}>≣</button>
+                  <button onMouseDown={preventToolbarMouseDown} title="右对齐" onClick={() => execEditorCommand('justifyRight')}>≢</button>
+                  <button onMouseDown={preventToolbarMouseDown} title="分割线" onClick={() => execEditorCommand('insertHorizontalRule')}>—</button>
+                  <button onMouseDown={preventToolbarMouseDown} title="插入表格" onClick={() => insertBasicTable()}>▦</button>
+                  <button onMouseDown={preventToolbarMouseDown} title="选择图片" onClick={() => fileInputRef.current?.click()}>🖼</button>
                   <button className={formatBrush ? 'toolbar-active' : ''} title="格式刷（单次）" onClick={() => captureFormatBrush()}>🖌</button>
-                  <button title="清除样式" onClick={() => execEditorCommand('removeFormat')}>Tx</button>
+                  <button onMouseDown={preventToolbarMouseDown} title="清除样式" onClick={() => execEditorCommand('removeFormat')}>Tx</button>
                 </div> : null}
                 {selectedNote.noteType !== 'mind_map' && selectedImageEl ? <div className="image-mini-toolbar"><span>图片大小</span><button onClick={() => resizeSelectedImage('original')}>原始</button><button onClick={() => resizeSelectedImage(25)}>25%</button><button onClick={() => resizeSelectedImage(50)}>50%</button><button onClick={() => resizeSelectedImage(75)}>75%</button><button onClick={() => resizeSelectedImage(100)}>100%</button><button onClick={() => resizeSelectedImage('fit')}>适应宽度</button></div> : null}
                 {selectedNote.noteType !== 'mind_map' ? <div className="editor-meta"><span>{noteTypeLabel(selectedNote.noteType)}</span><span>{selectedFolder?.name ?? '未分类'}</span><span>{stripHtml(selectedNote.content).trim().length} 字</span>{query ? <span>搜索词：{searchText}</span> : null}</div> : null}
-                {selectedNote.noteType === 'rich_text' ? <div ref={editorContentRef} className="editor-content" contentEditable={!query} suppressContentEditableWarning onPaste={handleEditorPaste} onClick={handleEditorClick} onKeyUp={() => captureEditorSelection()} onMouseUp={() => { captureEditorSelection(); applyFormatBrushIfNeeded() }} onContextMenu={openEditorContextMenu} onBlur={(e) => void updateSelectedContent(e.currentTarget.innerHTML)} dangerouslySetInnerHTML={{ __html: selectedNoteHtml || '<p></p>' }} /> : selectedNote.noteType === 'markdown' ? <div className="markdown-shell"><div className="markdown-editor-pane"><textarea className="plain-editor markdown-source-editor" value={normalizedMarkdownSource} placeholder="# 这里写 Markdown" onChange={(e) => void updateSelectedContent(e.target.value)} onContextMenu={(e) => { e.preventDefault(); setEditorMenu({ x: e.clientX, y: e.clientY }) }} /></div><div className="markdown-preview markdown-rendered">{markdownPreviewHtml ? <div dangerouslySetInnerHTML={{ __html: markdownPreviewHtml }} /> : <div className="markdown-empty">在左侧输入 Markdown，右侧实时预览。</div>}</div></div> : <MindMapEditor value={selectedNote.content} onChange={(val) => void updateSelectedContent(val)} />}
+                {selectedNote.noteType === 'rich_text' ? <div ref={editorContentRef} className="editor-content" contentEditable={!query} suppressContentEditableWarning onPaste={handleEditorPaste} onClick={(e) => { handleEditorClick(e); saveEditorSelection() }} onMouseUp={() => { saveEditorSelection(); applyFormatBrushIfNeeded() }} onContextMenu={openEditorContextMenu} onKeyUp={() => saveEditorSelection()} onFocus={() => saveEditorSelection()} onBlur={(e) => { void updateSelectedContent(e.currentTarget.innerHTML) }} dangerouslySetInnerHTML={{ __html: selectedNoteHtml || '<p></p>' }} /> : selectedNote.noteType === 'markdown' ? <div className="markdown-shell"><div className="markdown-editor-pane"><textarea className="plain-editor markdown-source-editor" value={normalizedMarkdownSource} placeholder="# 这里写 Markdown" onChange={(e) => void updateSelectedContent(e.target.value)} onContextMenu={(e) => { e.preventDefault(); setEditorMenu({ x: e.clientX, y: e.clientY }) }} /></div><div className="markdown-preview markdown-rendered">{markdownPreviewHtml ? <div dangerouslySetInnerHTML={{ __html: markdownPreviewHtml }} /> : <div className="markdown-empty">在左侧输入 Markdown，右侧实时预览。</div>}</div></div> : <MindMapEditor value={selectedNote.content} onChange={(val) => void updateSelectedContent(val)} />}
               </>
             )}
           </>
@@ -1842,12 +1987,12 @@ ${result.filePath}`)
                 {selectedVaultEntry.entryType === 'secure_note' ? (
                   <>
                     <div className="editor-toolbar compact-toolbar">
-                      <select className="toolbar-select toolbar-select-sm" defaultValue="paragraph" onChange={(e) => { const v = e.target.value; if (v === 'paragraph') execEditorCommand('formatBlock', 'p'); if (v === 'h2') execEditorCommand('formatBlock', 'h2'); if (v === 'blockquote') execEditorCommand('formatBlock', 'blockquote'); e.currentTarget.value = v }}>
+                      <select onMouseDownCapture={rememberEditorSelectionBeforeToolbarFocus} className="toolbar-select toolbar-select-sm" defaultValue="paragraph" onChange={(e) => { const v = e.target.value; if (v === 'paragraph') execEditorCommand('formatBlock', 'p'); if (v === 'h2') execEditorCommand('formatBlock', 'h2'); if (v === 'blockquote') execEditorCommand('formatBlock', 'blockquote'); e.currentTarget.value = v }}>
                         <option value="paragraph">正文</option>
                         <option value="h2">H2</option>
                         <option value="blockquote">引用</option>
                       </select>
-                      <select className="toolbar-select" defaultValue="" onChange={(e) => { if (e.target.value) execEditorCommand('fontName', e.target.value) }}>
+                      <select onMouseDownCapture={rememberEditorSelectionBeforeToolbarFocus} className="toolbar-select" defaultValue="" onChange={(e) => { if (e.target.value) execEditorCommand('fontName', e.target.value) }}>
                         <option value="">默认字体</option>
                         <option value="PingFang SC">苹方</option>
                         <option value="Microsoft YaHei">微软雅黑</option>
@@ -1855,33 +2000,33 @@ ${result.filePath}`)
                         <option value="SimHei">黑体</option>
                         <option value="monospace">等宽</option>
                       </select>
-                      <select className="toolbar-select toolbar-select-size" defaultValue="16" onChange={(e) => applyFontSize(Number(e.target.value))}>
+                      <select onMouseDownCapture={rememberEditorSelectionBeforeToolbarFocus} className="toolbar-select toolbar-select-size" defaultValue="16" onChange={(e) => applyFontSize(Number(e.target.value))}>
                         {[12, 14, 16, 18, 22, 26, 30, 36].map((size) => <option key={size} value={size}>{size}</option>)}
                       </select>
-                      <select className="toolbar-select toolbar-select-line-height" defaultValue="1.5" onChange={(e) => applyLineHeight(e.target.value)}>
-                        {LINE_HEIGHT_OPTIONS.map((lineHeight) => <option key={lineHeight} value={lineHeight}>{lineHeight}</option>)}
+                      <select onMouseDownCapture={rememberEditorSelectionBeforeToolbarFocus} className="toolbar-select toolbar-select-lineheight" defaultValue="1.5" onChange={(e) => applyLineHeight(Number(e.target.value))}>
+                        {[1, 1.15, 1.5, 1.7, 2, 2.5, 3].map((val) => <option key={String(val)} value={val}>{`行距 ${val}`}</option>)}
                       </select>
                       <span className="toolbar-divider"></span>
-                      <button title="加粗" onClick={() => execEditorCommand('bold')}><strong>B</strong></button>
-                      <button title="斜体" onClick={() => execEditorCommand('italic')}><em>I</em></button>
-                      <button title="下划线" onClick={() => execEditorCommand('underline')}><span className="toolbar-under">U</span></button>
-                      <button title="删除线" onClick={() => execEditorCommand('strikeThrough')}><span className="toolbar-strike">S</span></button>
+                      <button onMouseDown={preventToolbarMouseDown} title="加粗" onClick={() => execEditorCommand('bold')}><strong>B</strong></button>
+                      <button onMouseDown={preventToolbarMouseDown} title="斜体" onClick={() => execEditorCommand('italic')}><em>I</em></button>
+                      <button onMouseDown={preventToolbarMouseDown} title="下划线" onClick={() => execEditorCommand('underline')}><span className="toolbar-under">U</span></button>
+                      <button onMouseDown={preventToolbarMouseDown} title="删除线" onClick={() => execEditorCommand('strikeThrough')}><span className="toolbar-strike">S</span></button>
                       <input className="toolbar-color" title="文字颜色" type="color" onChange={(e) => execEditorCommand('foreColor', e.target.value)} defaultValue="#1f2937" />
                       <input className="toolbar-color" title="高亮颜色" type="color" onChange={(e) => execEditorCommand('hiliteColor', e.target.value)} defaultValue="#fff2a8" />
                       <span className="toolbar-divider"></span>
-                      <button title="无序列表" onClick={() => execEditorCommand('insertUnorderedList')}>•</button>
-                      <button title="有序列表" onClick={() => execEditorCommand('insertOrderedList')}>1.</button>
-                      <button title="左对齐" onClick={() => execEditorCommand('justifyLeft')}>≡</button>
-                      <button title="居中" onClick={() => execEditorCommand('justifyCenter')}>≣</button>
-                      <button title="右对齐" onClick={() => execEditorCommand('justifyRight')}>≢</button>
-                      <button title="分割线" onClick={() => execEditorCommand('insertHorizontalRule')}>—</button>
-                      <button title="插入表格" onClick={() => insertBasicTable()}>▦</button>
-                      <button title="选择图片" onClick={() => fileInputRef.current?.click()}>🖼</button>
+                      <button onMouseDown={preventToolbarMouseDown} title="无序列表" onClick={() => execEditorCommand('insertUnorderedList')}>•</button>
+                      <button onMouseDown={preventToolbarMouseDown} title="有序列表" onClick={() => execEditorCommand('insertOrderedList')}>1.</button>
+                      <button onMouseDown={preventToolbarMouseDown} title="左对齐" onClick={() => execEditorCommand('justifyLeft')}>≡</button>
+                      <button onMouseDown={preventToolbarMouseDown} title="居中" onClick={() => execEditorCommand('justifyCenter')}>≣</button>
+                      <button onMouseDown={preventToolbarMouseDown} title="右对齐" onClick={() => execEditorCommand('justifyRight')}>≢</button>
+                      <button onMouseDown={preventToolbarMouseDown} title="分割线" onClick={() => execEditorCommand('insertHorizontalRule')}>—</button>
+                      <button onMouseDown={preventToolbarMouseDown} title="插入表格" onClick={() => insertBasicTable()}>▦</button>
+                      <button onMouseDown={preventToolbarMouseDown} title="选择图片" onClick={() => fileInputRef.current?.click()}>🖼</button>
                       <button className={formatBrush ? 'toolbar-active' : ''} title="格式刷（单次）" onClick={() => captureFormatBrush()}>🖌</button>
-                      <button title="清除样式" onClick={() => execEditorCommand('removeFormat')}>Tx</button>
+                      <button onMouseDown={preventToolbarMouseDown} title="清除样式" onClick={() => execEditorCommand('removeFormat')}>Tx</button>
                     </div>
                     {selectedImageEl ? <div className="image-mini-toolbar"><span>图片大小</span><button onClick={() => resizeSelectedImage('original')}>原始</button><button onClick={() => resizeSelectedImage(25)}>25%</button><button onClick={() => resizeSelectedImage(50)}>50%</button><button onClick={() => resizeSelectedImage(75)}>75%</button><button onClick={() => resizeSelectedImage(100)}>100%</button><button onClick={() => resizeSelectedImage('fit')}>适应宽度</button></div> : null}
-                    <div ref={vaultEditorRef} className="editor-content vault-rich-editor" contentEditable suppressContentEditableWarning onPaste={handleEditorPaste} onClick={handleEditorClick} onKeyUp={() => captureEditorSelection()} onMouseUp={() => { captureEditorSelection(); applyFormatBrushIfNeeded() }} onContextMenu={openEditorContextMenu} onBlur={(e) => updateVaultDraftPayloadField('notes', e.currentTarget.innerHTML)} dangerouslySetInnerHTML={{ __html: selectedVaultPayload.notes || '<p></p>' }} />
+                    <div ref={vaultEditorRef} className="editor-content vault-rich-editor" contentEditable suppressContentEditableWarning onPaste={handleEditorPaste} onClick={(e) => { handleEditorClick(e); saveEditorSelection() }} onMouseUp={() => { saveEditorSelection(); applyFormatBrushIfNeeded() }} onContextMenu={openEditorContextMenu} onKeyUp={() => saveEditorSelection()} onFocus={() => saveEditorSelection()} onBlur={(e) => { updateVaultDraftPayloadField('notes', e.currentTarget.innerHTML) }} dangerouslySetInnerHTML={{ __html: selectedVaultPayload.notes || '<p></p>' }} />
                   </>
                 ) : selectedVaultEntry.entryType === 'login' ? (
                   <div className="vault-form">
