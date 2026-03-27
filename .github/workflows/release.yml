@@ -48,10 +48,9 @@ jobs:
           path: |
             src-tauri/target/release/bundle/**
                   - name: Upload Release Assets
-        uses: softprops/action-gh-release@v2
-        with:
           files: |
             src-tauri/target/release/bundle/**/*.exe
-            src-tauri/target/release/bundle/**/*.dmg
+            src-tauri/target/release/bundle/**/*.dmg        
+        uses: softprops/action-gh-release@v2
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
