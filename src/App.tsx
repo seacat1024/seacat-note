@@ -410,44 +410,10 @@ function updateSettings<K extends keyof AppSettings>(key: K, value: AppSettings[
   }
 
   function applyFontSize(px: number) {
-    const root = activeEditorRoot()
-    if (!root) return
-    restoreEditorSelection()
-    root.focus()
-    const selection = window.getSelection()
-    if (!selection || !selection.rangeCount) return
-    const range = selection.getRangeAt(0)
-    if (!root.contains(range.commonAncestorContainer)) return
-
-    if (range.collapsed) {
-      execEditorCommand('fontSize', '7')
-      normalizeFontSizeTags(px)
-      captureEditorSelection()
-      void persistActiveEditor()
-      return
-    }
-
-    const span = document.createElement('span')
-    span.style.fontSize = `${px}px`
-
-    try {
-      const extracted = range.extractContents()
-      span.appendChild(extracted)
-      range.insertNode(span)
-
-      selection.removeAllRanges()
-      const newRange = document.createRange()
-      newRange.selectNodeContents(span)
-      selection.addRange(newRange)
-      captureEditorSelection()
-      void persistActiveEditor()
-      return
-    } catch {
-      execEditorCommand('fontSize', '7')
-      normalizeFontSizeTags(px)
-      captureEditorSelection()
-      void persistActiveEditor()
-    }
+    execEditorCommand('fontSize', '7')
+    normalizeFontSizeTags(px)
+    captureEditorSelection()
+    void persistActiveEditor()
   }
 
   function isEditorBlockElement(el: HTMLElement) {
