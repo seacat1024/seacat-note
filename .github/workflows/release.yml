@@ -4,7 +4,6 @@ on:
   push:
     tags:
       - "v*"
-  workflow_dispatch:
 
 permissions:
   contents: write
@@ -12,44 +11,43 @@ permissions:
 jobs:
   build:
     strategy:
-      fail-fast: false
       matrix:
         os: [macos-latest, windows-latest]
 
     runs-on: ${{ matrix.os }}
 
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      - name: Setup Node
-        uses: actions/setup-node@v4
+      - uses: actions/setup-node@v4
         with:
           node-version: 20
-          cache: npm
 
-      - name: Setup Rust
-        uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@stable
 
-      - name: Install dependencies
-        run: npm install
-
-      - name: Build frontend
-        run: npm run build
-
-      # 🔥 核心：用这个，不要再用 cargo tauri
-      - name: Build Tauri App
-        run: npx tauri build
+      - run: npm install
+      - run: npm run build
+      - run: npx tauri build
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: seacat-note-${{ matrix.os }}
-          path: |
-            src-tauri/target/release/bundle/**
-                  - name: Upload Release Assets
+          name: bundle-${{ matrix.os }}
+          path: src-tauri/target/release/bundle/**
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
+
+      - name: Upload to GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
           files: |
-            src-tauri/target/release/bundle/**/*.exe
-            src-tauri/target/release/bundle/**/*.dmg        
+            **/*.exe
+            **/*.dmg
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
