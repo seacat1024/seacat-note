@@ -47,3 +47,11 @@ jobs:
           name: seacat-note-${{ matrix.os }}
           path: |
             src-tauri/target/release/bundle/**
+                  - name: Upload Release Assets
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            src-tauri/target/release/bundle/**/*.exe
+            src-tauri/target/release/bundle/**/*.dmg
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
