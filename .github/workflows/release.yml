@@ -14,62 +14,42 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - platform: macos-latest
-            args: ""
-          - platform: windows-latest
-            args: ""
+        os: [macos-latest, windows-latest]
 
-    runs-on: ${{ matrix.platform }}
+    runs-on: ${{ matrix.os }}
 
     steps:
-      - name: Checkout repository
+      - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Setup Node.js
+      # Node
+      - name: Setup Node
         uses: actions/setup-node@v4
         with:
           node-version: 20
-          cache: npm
 
-      - name: Install Rust stable
+      # Rust
+      - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
 
-      - name: Rust cache
-        uses: swatinem/rust-cache@v2
-        with:
-          workspaces: |
-            src-tauri -> target
-
-      - name: Install frontend dependencies
+      # 安装依赖
+      - name: Install dependencies
         run: npm install
 
-      - name: Build Tauri app
-        uses: tauri-apps/tauri-action@v0
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        with:
-          tagName: ${{ github.ref_name }}
-          releaseName: "Seacat Note ${{ github.ref_name }}"
-          releaseBody: |
-            Automated build for ${{ github.ref_name }}.
+      # Windows 需要这个
+      - name: Install Rust target (Windows only)
+        if: matrix.os == 'windows-latest'
+        run: rustup target add x86_64-pc-windows-msvc
 
-            Included platforms:
-            - macOS
-            - Windows
-          releaseDraft: true
-          prerelease: false
-          args: ${{ matrix.args }}
+      # 🔥 核心：直接用 cargo tauri build
+      - name: Build Tauri App
+        run: |
+          cargo tauri build
 
-      - name: Upload standalone artifacts
-        if: always()
+      # 上传产物
+      - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: seacat-note-${{ matrix.platform }}
+          name: seacat-note-${{ matrix.os }}
           path: |
             src-tauri/target/release/bundle/**
-            src-tauri/target/release/*.exe
-            src-tauri/target/release/*.msi
-            src-tauri/target/release/*.dmg
-            src-tauri/target/release/*.app
-            src-tauri/target/release/*.zip
