@@ -209,3 +209,19 @@ git push -f origin main
 
 ## 🤖 说明
 本程序全来自 ChatGPT 编写。
+
+## 🚀 GitHub 自动构建
+
+仓库已内置 GitHub Actions 自动构建工作流：
+
+- 支持 macOS 自动构建
+- 支持 Windows 自动构建
+- 支持打 tag 后自动生成 GitHub Release 草稿
+- 也支持手动在 Actions 页面触发构建
+
+常用发布命令：
+
+```bash
+git tag v1.0.0
+git push origin v1.0.0
+```
