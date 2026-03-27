@@ -1,0 +1,75 @@
+name: Build and Release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: macos-latest
+            args: ""
+          - platform: windows-latest
+            args: ""
+
+    runs-on: ${{ matrix.platform }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Rust cache
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            src-tauri -> target
+
+      - name: Install frontend dependencies
+        run: npm install
+
+      - name: Build Tauri app
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tagName: ${{ github.ref_name }}
+          releaseName: "Seacat Note ${{ github.ref_name }}"
+          releaseBody: |
+            Automated build for ${{ github.ref_name }}.
+
+            Included platforms:
+            - macOS
+            - Windows
+          releaseDraft: true
+          prerelease: false
+          args: ${{ matrix.args }}
+
+      - name: Upload standalone artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: seacat-note-${{ matrix.platform }}
+          path: |
+            src-tauri/target/release/bundle/**
+            src-tauri/target/release/*.exe
+            src-tauri/target/release/*.msi
+            src-tauri/target/release/*.dmg
+            src-tauri/target/release/*.app
+            src-tauri/target/release/*.zip
