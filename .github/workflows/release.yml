@@ -22,31 +22,25 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      # Node
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
           node-version: 20
+          cache: npm
 
-      # Rust
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
 
-      # 安装依赖
       - name: Install dependencies
         run: npm install
 
-      # Windows 需要这个
-      - name: Install Rust target (Windows only)
-        if: matrix.os == 'windows-latest'
-        run: rustup target add x86_64-pc-windows-msvc
+      - name: Build frontend
+        run: npm run build
 
-      # 🔥 核心：直接用 cargo tauri build
+      # 🔥 核心：用这个，不要再用 cargo tauri
       - name: Build Tauri App
-        run: |
-          cargo tauri build
+        run: npx tauri build
 
-      # 上传产物
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
