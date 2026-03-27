@@ -1,0 +1,38 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "海猫笔记",
+  "version": "0.76.0",
+  "identifier": "com.seacat.note",
+  "build": {
+    "beforeDevCommand": "npm run dev",
+    "beforeBuildCommand": "npm run build",
+    "devUrl": "http://localhost:1420",
+    "frontendDist": "../dist"
+  },
+  "app": {
+    "windows": [
+      {
+        "title": "海猫笔记",
+        "width": 1360,
+        "height": 900,
+        "resizable": true
+      }
+    ],
+    "security": {
+      "capabilities": [
+        "main-capability"
+      ]
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": [
+      "app",
+      "dmg",
+      "msi"
+    ],
+    "icon": [
+      "icons/icon.png"
+    ]
+  }
+}

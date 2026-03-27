@@ -1,0 +1,14 @@
+/Users/vic/Documents/work/seacat-note/seacat-note/src-tauri/target/release/deps/thiserror-c9addbcd4d8e4f2d.d: /Users/vic/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/thiserror-2.0.18/src/lib.rs /Users/vic/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/thiserror-2.0.18/src/aserror.rs /Users/vic/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/thiserror-2.0.18/src/display.rs /Users/vic/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/thiserror-2.0.18/src/var.rs /Users/vic/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/thiserror-2.0.18/src/private.rs /Users/vic/Documents/work/seacat-note/seacat-note/src-tauri/target/release/build/thiserror-d633f286ad5c43eb/out/private.rs
+
+/Users/vic/Documents/work/seacat-note/seacat-note/src-tauri/target/release/deps/libthiserror-c9addbcd4d8e4f2d.rlib: /Users/vic/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/thiserror-2.0.18/src/lib.rs /Users/vic/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/thiserror-2.0.18/src/aserror.rs /Users/vic/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/thiserror-2.0.18/src/display.rs /Users/vic/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/thiserror-2.0.18/src/var.rs /Users/vic/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/thiserror-2.0.18/src/private.rs /Users/vic/Documents/work/seacat-note/seacat-note/src-tauri/target/release/build/thiserror-d633f286ad5c43eb/out/private.rs
+
+/Users/vic/Documents/work/seacat-note/seacat-note/src-tauri/target/release/deps/libthiserror-c9addbcd4d8e4f2d.rmeta: /Users/vic/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/thiserror-2.0.18/src/lib.rs /Users/vic/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/thiserror-2.0.18/src/aserror.rs /Users/vic/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/thiserror-2.0.18/src/display.rs /Users/vic/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/thiserror-2.0.18/src/var.rs /Users/vic/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/thiserror-2.0.18/src/private.rs /Users/vic/Documents/work/seacat-note/seacat-note/src-tauri/target/release/build/thiserror-d633f286ad5c43eb/out/private.rs
+
+/Users/vic/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/thiserror-2.0.18/src/lib.rs:
+/Users/vic/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/thiserror-2.0.18/src/aserror.rs:
+/Users/vic/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/thiserror-2.0.18/src/display.rs:
+/Users/vic/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/thiserror-2.0.18/src/var.rs:
+/Users/vic/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/thiserror-2.0.18/src/private.rs:
+/Users/vic/Documents/work/seacat-note/seacat-note/src-tauri/target/release/build/thiserror-d633f286ad5c43eb/out/private.rs:
+
+# env-dep:OUT_DIR=/Users/vic/Documents/work/seacat-note/seacat-note/src-tauri/target/release/build/thiserror-d633f286ad5c43eb/out
