@@ -590,6 +590,8 @@ function updateSettings<K extends keyof AppSettings>(key: K, value: AppSettings[
 
     const startBlock = closestEditableBlock(range.startContainer, root)
     const endBlock = closestEditableBlock(range.endContainer, root)
+    if (!startBlock || !endBlock) return
+
     const selectedText = sel.toString().trim()
     const startText = startBlock.textContent?.trim() || ''
     const sameBlock = startBlock === endBlock
@@ -604,7 +606,40 @@ function updateSettings<K extends keyof AppSettings>(key: K, value: AppSettings[
       const next = document.createRange()
       next.selectNodeContents(target)
       setCaretAtRangeEnd(next)
-    } else if (sameBlock && selectedText && selectedText === startText) {
+    } else if (!sameBlock) {
+      const blockSet = new Set<HTMLElement>()
+      const walker = document.createTreeWalker(root, NodeFilter.SHOW_ELEMENT, {
+        acceptNode(node) {
+          if (!(node instanceof HTMLElement)) return NodeFilter.FILTER_SKIP
+          if (node === root) return NodeFilter.FILTER_SKIP
+          const display = window.getComputedStyle(node).display
+          const isBlock = display === 'block' || node.tagName === 'P' || node.tagName === 'DIV' || /^H[1-6]$/.test(node.tagName) || node.tagName === 'LI'
+          if (!isBlock) return NodeFilter.FILTER_SKIP
+          return range.intersectsNode(node) ? NodeFilter.FILTER_ACCEPT : NodeFilter.FILTER_SKIP
+        },
+      })
+
+      let current = walker.nextNode()
+      while (current) {
+        if (current instanceof HTMLElement) {
+          blockSet.add(current)
+        }
+        current = walker.nextNode()
+      }
+
+      if (!blockSet.size) {
+        blockSet.add(startBlock)
+        blockSet.add(endBlock)
+      }
+
+      Array.from(blockSet).forEach((block) => {
+        if (styleName === 'fontSize') {
+          stripOwnFontSize(block)
+          clearFontSizingWithin(block)
+        }
+        block.style[styleName] = value
+      })
+    } else if (selectedText && selectedText === startText) {
       const target = preferredFullLineTarget(startBlock, selectedText)
       if (styleName === 'fontSize') {
         stripOwnFontSize(target)
@@ -1698,7 +1733,7 @@ ${result.filePath}`)
           onMouseDown={(e) => startPointerDrag({ kind: 'folder', id: folder.id }, folder.name, e)}
           onClick={() => { setSource('normal'); setSelectedFolderId(folder.id); setSelectedNoteId(''); setSelectedVaultEntryId('') }}
           onContextMenu={(e) => { e.preventDefault(); setSource('normal'); setSelectedFolderId(folder.id); setSelectedNoteId(''); setContextMenu({ x: e.clientX, y: e.clientY, kind: 'folder', id: folder.id }) }}
-          onDoubleClick={() => beginRename('folder', folder.id, folder.name)}>
+          onDoubleClick={() => setExpanded((p) => ({ ...p, [folder.id]: !isOpen }))}>
           <button type="button" className="twist" onClick={(ev) => { ev.stopPropagation(); setExpanded((p) => ({ ...p, [folder.id]: !isOpen })) }}>{isOpen ? '▾' : '▸'}</button>
           {isRenaming ? <input autoFocus className="inline-input" value={renameValue} onChange={(e) => setRenameValue(e.target.value)} onBlur={() => void commitRename()} onKeyDown={(e) => { if (e.key === 'Enter') void commitRename(); if (e.key === 'Escape') setRenamingId(null) }} /> : <span className="folder-name">{renderHighlighted(folder.name, query)}</span>}
           {(notes.length + folders.length) > 0 ? <span className="tree-count">{notes.length + folders.length}</span> : null}
@@ -1719,7 +1754,7 @@ ${result.filePath}`)
           onMouseDown={(e) => startPointerDrag({ kind: 'note', id: note.id }, note.title || '未命名笔记', e)}
           onClick={() => { setSource('normal'); setSelectedFolderId(note.folderId); setSelectedNoteId(note.id); setSelectedVaultEntryId('') }}
           onContextMenu={(e) => { e.preventDefault(); setSource('normal'); setSelectedFolderId(note.folderId); setSelectedNoteId(note.id); setContextMenu({ x: e.clientX, y: e.clientY, kind: 'note', id: note.id }) }}
-          onDoubleClick={() => beginRename('note', note.id, note.title)}>
+          onDoubleClick={() => { setSource('normal'); setSelectedFolderId(note.folderId); setSelectedNoteId(note.id); setSelectedVaultEntryId('') }}>
           <span className={`note-type-dot note-type-dot--${note.noteType}`}></span>
           {isRenaming ? <input autoFocus className="inline-input" value={renameValue} onChange={(e) => setRenameValue(e.target.value)} onBlur={() => void commitRename()} onKeyDown={(e) => { if (e.key === 'Enter') void commitRename(); if (e.key === 'Escape') setRenamingId(null) }} /> : <span className="note-name">{renderHighlighted(note.title || '未命名笔记', query)}</span>}
         </div>
@@ -1737,6 +1772,7 @@ ${result.filePath}`)
           className={`tree-row folder-row ${selectedVaultFolderId === folder.id && !selectedVaultEntryId ? 'folder-selected' : ''}`}
           style={{ paddingLeft: 10 + depth * 12 }}
           onClick={() => guardVaultNavigation(() => { setSource('vault'); setSelectedVaultFolderId(folder.id); setSelectedVaultEntryId(''); setVaultLastActive(Date.now()) })}
+          onDoubleClick={() => guardVaultNavigation(() => { setVaultExpanded((p) => ({ ...p, [folder.id]: !isOpen })); setVaultLastActive(Date.now()) })}
           onContextMenu={(e) => {
             e.preventDefault()
             setContextMenu(null)
