@@ -164,6 +164,8 @@ export default function App() {
   const savedEditorSelectionOffsetsRef = useRef<{ start: number; end: number } | null>(null)
   const [formatBrush, setFormatBrush] = useState<null | { bold: boolean; italic: boolean; underline: boolean; strike: boolean; foreColor: string; backColor: string; fontName: string; fontSize: string }>(null)
   const [selectedImageEl, setSelectedImageEl] = useState<HTMLImageElement | null>(null)
+  const draggingImageCardRef = useRef<HTMLElement | null>(null)
+  const imageDropMarkerRef = useRef<HTMLElement | null>(null)
   const [tableMenu, setTableMenu] = useState<{ x: number; y: number } | null>(null)
   const [backupBusy, setBackupBusy] = useState(false)
   const [backupNotice, setBackupNotice] = useState('')
@@ -705,6 +707,12 @@ function updateSettings<K extends keyof AppSettings>(key: K, value: AppSettings[
     return null
   }
 
+  useEffect(() => {
+    const root = activeEditorRoot()
+    if (!root) return
+    normalizeEditorImages(root)
+  }, [selectedNoteId, selectedVaultEntryId, source])
+
   async function persistActiveEditor() {
     const root = activeEditorRoot()
     if (!root) return
@@ -720,20 +728,90 @@ function updateSettings<K extends keyof AppSettings>(key: K, value: AppSettings[
     document.execCommand('insertHTML', false, html)
   }
 
+  function imageCardOf(target: EventTarget | HTMLElement | null) {
+    const el = target instanceof HTMLElement ? target : null
+    return el?.closest('.editor-image-card') as HTMLElement | null
+  }
+
+  function ensureImageCard(img: HTMLImageElement) {
+    let card = img.closest('.editor-image-card') as HTMLElement | null
+    if (!card) {
+      card = document.createElement('span')
+      card.className = 'editor-image-card'
+      card.setAttribute('contenteditable', 'false')
+      card.setAttribute('draggable', 'true')
+      img.parentNode?.insertBefore(card, img)
+      card.appendChild(img)
+    }
+    card.setAttribute('contenteditable', 'false')
+    card.setAttribute('draggable', 'true')
+    return card
+  }
+
+  function isImageOnlyBlock(el: Element) {
+    const tag = el.tagName
+    if (!['P', 'DIV'].includes(tag)) return false
+    let imageCount = 0
+    for (const node of Array.from(el.childNodes)) {
+      if (node.nodeType === Node.TEXT_NODE) {
+        if ((node.textContent || '').replace(/ /g, ' ').trim()) return false
+        continue
+      }
+      if (!(node instanceof HTMLElement)) return false
+      if (node.classList.contains('editor-image-card')) {
+        imageCount += 1
+        continue
+      }
+      if (node.tagName === 'BR') continue
+      return false
+    }
+    return imageCount > 0
+  }
+
+  function makeImageSpacer() {
+    const spacer = document.createElement('span')
+    spacer.className = 'editor-image-spacer'
+    spacer.innerHTML = '&#8203;'
+    return spacer
+  }
+
+  function ensureImageCardSpacing(root: HTMLElement) {
+    const cards = Array.from(root.querySelectorAll('.editor-image-card')) as HTMLElement[]
+    cards.forEach((card) => {
+      const prev = card.previousSibling
+      if (!prev || (prev instanceof HTMLElement && prev.classList.contains('editor-image-card'))) {
+        card.parentNode?.insertBefore(makeImageSpacer(), card)
+      }
+      const next = card.nextSibling
+      if (!next || (next instanceof HTMLElement && next.classList.contains('editor-image-card'))) {
+        card.parentNode?.insertBefore(makeImageSpacer(), card.nextSibling)
+      }
+    })
+  }
+
   function normalizeInsertedImage(img: HTMLImageElement) {
     const naturalWidth = img.naturalWidth || Number(img.getAttribute('data-natural-width') || 0) || 800
     const naturalHeight = img.naturalHeight || Number(img.getAttribute('data-natural-height') || 0) || 600
-    const width = naturalWidth
-    const height = naturalHeight
+    const maxDefaultWidth = Math.max(220, Math.min(360, Math.round((activeEditorRoot()?.clientWidth || 900) * 0.42)))
+    const width = Math.min(naturalWidth, maxDefaultWidth)
+    const height = Math.round((naturalHeight / naturalWidth) * width)
     img.setAttribute('data-natural-width', String(naturalWidth))
     img.setAttribute('data-natural-height', String(naturalHeight))
     img.style.width = `${width}px`
     img.style.height = `${height}px`
     img.style.maxWidth = 'none'
     img.style.display = 'block'
-    img.style.margin = '8px 0'
-    img.style.borderRadius = '8px'
+    img.style.margin = '0'
+    img.style.borderRadius = '12px'
+    img.setAttribute('draggable', 'false')
     img.classList.add('editor-image')
+    ensureImageCard(img)
+  }
+
+  function normalizeEditorImages(root: HTMLElement | null) {
+    if (!root) return
+    root.querySelectorAll('img').forEach((node) => normalizeInsertedImage(node as HTMLImageElement))
+    ensureImageCardSpacing(root)
   }
 
   function insertImageFile(file: File) {
@@ -742,9 +820,13 @@ function updateSettings<K extends keyof AppSettings>(key: K, value: AppSettings[
       const src = String(reader.result || '')
       const probe = new Image()
       probe.onload = () => {
-        const width = probe.naturalWidth || 800
-        const height = probe.naturalHeight || 600
-        insertHtmlAtCursor(`<img src="${src}" data-natural-width="${probe.naturalWidth || width}" data-natural-height="${probe.naturalHeight || height}" style="width:${width}px;height:${height}px;max-width:none;display:block;margin:8px 0;border-radius:8px;" class="editor-image" />`)
+        const naturalWidth = probe.naturalWidth || 800
+        const naturalHeight = probe.naturalHeight || 600
+        const maxDefaultWidth = Math.max(220, Math.min(360, Math.round((activeEditorRoot()?.clientWidth || 900) * 0.42)))
+        const width = Math.min(naturalWidth, maxDefaultWidth)
+        const height = Math.round((naturalHeight / naturalWidth) * width)
+        insertHtmlAtCursor(`<span class="editor-image-spacer">&#8203;</span><span class="editor-image-card" contenteditable="false" draggable="true"><img src="${src}" data-natural-width="${naturalWidth}" data-natural-height="${naturalHeight}" style="width:${width}px;height:${height}px;max-width:none;display:block;margin:0;border-radius:12px;" class="editor-image" draggable="false" /></span><span class="editor-image-spacer">&#8203;</span>`)
+        normalizeEditorImages(activeEditorRoot())
         void persistActiveEditor()
       }
       probe.src = src
@@ -785,6 +867,60 @@ function updateSettings<K extends keyof AppSettings>(key: K, value: AppSettings[
     const height = Math.round((nh / nw) * width)
     selectedImageEl.style.width = `${width}px`
     selectedImageEl.style.height = `${height}px`
+    void persistActiveEditor()
+  }
+
+  function clearImageDropMarker() {
+    imageDropMarkerRef.current?.classList.remove('drop-before', 'drop-after')
+    imageDropMarkerRef.current = null
+  }
+
+  function handleEditorDragStart(e: React.DragEvent<HTMLDivElement>) {
+    const card = imageCardOf(e.target)
+    if (!card) return
+    draggingImageCardRef.current = card
+    e.dataTransfer.effectAllowed = 'move'
+    card.classList.add('is-dragging')
+    if (selectedImageEl && !card.contains(selectedImageEl)) setSelectedImageEl(null)
+  }
+
+  function handleEditorDragEnd() {
+    draggingImageCardRef.current?.classList.remove('is-dragging')
+    draggingImageCardRef.current = null
+    clearImageDropMarker()
+  }
+
+  function handleEditorDragOver(e: React.DragEvent<HTMLDivElement>) {
+    const draggingCard = draggingImageCardRef.current
+    if (!draggingCard) return
+    e.preventDefault()
+    const targetCard = imageCardOf(e.target)
+    clearImageDropMarker()
+    if (!targetCard || targetCard === draggingCard) return
+    const rect = targetCard.getBoundingClientRect()
+    const before = e.clientX < rect.left + rect.width / 2
+    targetCard.classList.add(before ? 'drop-before' : 'drop-after')
+    imageDropMarkerRef.current = targetCard
+  }
+
+  function handleEditorDrop(e: React.DragEvent<HTMLDivElement>) {
+    const draggingCard = draggingImageCardRef.current
+    if (!draggingCard) return
+    e.preventDefault()
+    const root = e.currentTarget
+    const targetCard = imageCardOf(e.target)
+    if (targetCard && targetCard !== draggingCard) {
+      const rect = targetCard.getBoundingClientRect()
+      const before = e.clientX < rect.left + rect.width / 2
+      targetCard.parentElement?.insertBefore(draggingCard, before ? targetCard : targetCard.nextSibling)
+    } else {
+      const lastImageBlock = Array.from(root.children).reverse().find((node) => node instanceof HTMLElement && isImageOnlyBlock(node as HTMLElement)) as HTMLElement | undefined
+      if (lastImageBlock) lastImageBlock.appendChild(draggingCard)
+    }
+    clearImageDropMarker()
+    draggingImageCardRef.current?.classList.remove('is-dragging')
+    draggingImageCardRef.current = null
+    ensureImageCardSpacing(root)
     void persistActiveEditor()
   }
 
@@ -910,6 +1046,21 @@ function updateSettings<K extends keyof AppSettings>(key: K, value: AppSettings[
     const exists = getMindNodeAtPath(parsedMindRoot, mindSelectionPath)
     if (!exists) setMindSelectionPath([])
   }, [selectedNote?.id, selectedNote?.noteType, parsedMindRoot])
+
+  useEffect(() => {
+    if (selectedNote?.noteType === 'rich_text') normalizeEditorImages(editorContentRef.current)
+  }, [selectedNote?.id, selectedNoteHtml])
+
+  useEffect(() => {
+    if (source === 'vault' && selectedVaultEntry?.entryType === 'secure_note') normalizeEditorImages(vaultEditorRef.current)
+  }, [source, selectedVaultEntry?.id, selectedVaultPayload.notes])
+
+  useEffect(() => {
+    const root = activeEditorRoot()
+    if (!root) return
+    root.querySelectorAll('.editor-image').forEach((node) => node.classList.remove('is-selected'))
+    selectedImageEl?.classList.add('is-selected')
+  }, [selectedImageEl, source, selectedNote?.id, selectedVaultEntry?.id])
 
   const childFolders = (parentId: string | null) => data.folders.filter((f) => f.parentId === parentId).sort((a, b) => a.sort - b.sort || a.name.localeCompare(b.name))
   const folderNotes = (folderId: string) => data.notes.filter((n) => n.folderId === folderId).sort((a, b) => a.sort - b.sort || a.title.localeCompare(b.title))
@@ -1733,7 +1884,7 @@ ${result.filePath}`)
           onMouseDown={(e) => startPointerDrag({ kind: 'folder', id: folder.id }, folder.name, e)}
           onClick={() => { setSource('normal'); setSelectedFolderId(folder.id); setSelectedNoteId(''); setSelectedVaultEntryId('') }}
           onContextMenu={(e) => { e.preventDefault(); setSource('normal'); setSelectedFolderId(folder.id); setSelectedNoteId(''); setContextMenu({ x: e.clientX, y: e.clientY, kind: 'folder', id: folder.id }) }}
-          onDoubleClick={() => setExpanded((p) => ({ ...p, [folder.id]: !isOpen }))}>
+          onDoubleClick={(e) => { e.preventDefault(); e.stopPropagation(); setSource('normal'); setSelectedFolderId(folder.id); setSelectedNoteId(''); setSelectedVaultEntryId(''); setExpanded((p) => ({ ...p, [folder.id]: !isOpen })) }}>
           <button type="button" className="twist" onClick={(ev) => { ev.stopPropagation(); setExpanded((p) => ({ ...p, [folder.id]: !isOpen })) }}>{isOpen ? '▾' : '▸'}</button>
           {isRenaming ? <input autoFocus className="inline-input" value={renameValue} onChange={(e) => setRenameValue(e.target.value)} onBlur={() => void commitRename()} onKeyDown={(e) => { if (e.key === 'Enter') void commitRename(); if (e.key === 'Escape') setRenamingId(null) }} /> : <span className="folder-name">{renderHighlighted(folder.name, query)}</span>}
           {(notes.length + folders.length) > 0 ? <span className="tree-count">{notes.length + folders.length}</span> : null}
@@ -1754,7 +1905,7 @@ ${result.filePath}`)
           onMouseDown={(e) => startPointerDrag({ kind: 'note', id: note.id }, note.title || '未命名笔记', e)}
           onClick={() => { setSource('normal'); setSelectedFolderId(note.folderId); setSelectedNoteId(note.id); setSelectedVaultEntryId('') }}
           onContextMenu={(e) => { e.preventDefault(); setSource('normal'); setSelectedFolderId(note.folderId); setSelectedNoteId(note.id); setContextMenu({ x: e.clientX, y: e.clientY, kind: 'note', id: note.id }) }}
-          onDoubleClick={() => { setSource('normal'); setSelectedFolderId(note.folderId); setSelectedNoteId(note.id); setSelectedVaultEntryId('') }}>
+>
           <span className={`note-type-dot note-type-dot--${note.noteType}`}></span>
           {isRenaming ? <input autoFocus className="inline-input" value={renameValue} onChange={(e) => setRenameValue(e.target.value)} onBlur={() => void commitRename()} onKeyDown={(e) => { if (e.key === 'Enter') void commitRename(); if (e.key === 'Escape') setRenamingId(null) }} /> : <span className="note-name">{renderHighlighted(note.title || '未命名笔记', query)}</span>}
         </div>
@@ -1772,7 +1923,7 @@ ${result.filePath}`)
           className={`tree-row folder-row ${selectedVaultFolderId === folder.id && !selectedVaultEntryId ? 'folder-selected' : ''}`}
           style={{ paddingLeft: 10 + depth * 12 }}
           onClick={() => guardVaultNavigation(() => { setSource('vault'); setSelectedVaultFolderId(folder.id); setSelectedVaultEntryId(''); setVaultLastActive(Date.now()) })}
-          onDoubleClick={() => guardVaultNavigation(() => { setVaultExpanded((p) => ({ ...p, [folder.id]: !isOpen })); setVaultLastActive(Date.now()) })}
+          onDoubleClick={(e) => guardVaultNavigation(() => { e.preventDefault(); e.stopPropagation(); setSource('vault'); setSelectedVaultFolderId(folder.id); setSelectedVaultEntryId(''); setVaultExpanded((p) => ({ ...p, [folder.id]: !isOpen })); setVaultLastActive(Date.now()) })}
           onContextMenu={(e) => {
             e.preventDefault()
             setContextMenu(null)
@@ -2005,7 +2156,7 @@ ${result.filePath}`)
                 </div> : null}
                 {selectedNote.noteType !== 'mind_map' && selectedImageEl ? <div className="image-mini-toolbar"><span>图片大小</span><button onClick={() => resizeSelectedImage('original')}>原始</button><button onClick={() => resizeSelectedImage(25)}>25%</button><button onClick={() => resizeSelectedImage(50)}>50%</button><button onClick={() => resizeSelectedImage(75)}>75%</button><button onClick={() => resizeSelectedImage(100)}>100%</button><button onClick={() => resizeSelectedImage('fit')}>适应宽度</button></div> : null}
                 {selectedNote.noteType !== 'mind_map' ? <div className="editor-meta"><span>{noteTypeLabel(selectedNote.noteType)}</span><span>{selectedFolder?.name ?? '未分类'}</span><span>{stripHtml(selectedNote.content).trim().length} 字</span>{query ? <span>搜索词：{searchText}</span> : null}</div> : null}
-                {selectedNote.noteType === 'rich_text' ? <div ref={editorContentRef} className="editor-content" contentEditable={!query} suppressContentEditableWarning onPaste={handleEditorPaste} onClick={(e) => { handleEditorClick(e); saveEditorSelection() }} onMouseUp={() => { saveEditorSelection(); applyFormatBrushIfNeeded() }} onContextMenu={openEditorContextMenu} onKeyUp={() => saveEditorSelection()} onFocus={() => saveEditorSelection()} onBlur={(e) => { void updateSelectedContent(e.currentTarget.innerHTML) }} dangerouslySetInnerHTML={{ __html: selectedNoteHtml || '<p></p>' }} /> : selectedNote.noteType === 'markdown' ? <div className="markdown-shell"><div className="markdown-editor-pane"><textarea className="plain-editor markdown-source-editor" value={normalizedMarkdownSource} placeholder="# 这里写 Markdown" onChange={(e) => void updateSelectedContent(e.target.value)} onContextMenu={(e) => { e.preventDefault(); setEditorMenu({ x: e.clientX, y: e.clientY }) }} /></div><div className="markdown-preview markdown-rendered">{markdownPreviewHtml ? <div dangerouslySetInnerHTML={{ __html: markdownPreviewHtml }} /> : <div className="markdown-empty">在左侧输入 Markdown，右侧实时预览。</div>}</div></div> : <MindMapEditor value={selectedNote.content} onChange={(val) => void updateSelectedContent(val)} />}
+                {selectedNote.noteType === 'rich_text' ? <div ref={editorContentRef} className="editor-content" contentEditable={!query} suppressContentEditableWarning onPaste={handleEditorPaste} onDragStart={handleEditorDragStart} onDragOver={handleEditorDragOver} onDrop={handleEditorDrop} onDragEnd={handleEditorDragEnd} onClick={(e) => { handleEditorClick(e); saveEditorSelection() }} onMouseUp={() => { saveEditorSelection(); applyFormatBrushIfNeeded() }} onContextMenu={openEditorContextMenu} onKeyUp={() => saveEditorSelection()} onFocus={() => saveEditorSelection()} onBlur={(e) => { void updateSelectedContent(e.currentTarget.innerHTML) }} dangerouslySetInnerHTML={{ __html: selectedNoteHtml || '<p></p>' }} /> : selectedNote.noteType === 'markdown' ? <div className="markdown-shell"><div className="markdown-editor-pane"><textarea className="plain-editor markdown-source-editor" value={normalizedMarkdownSource} placeholder="# 这里写 Markdown" onChange={(e) => void updateSelectedContent(e.target.value)} onContextMenu={(e) => { e.preventDefault(); setEditorMenu({ x: e.clientX, y: e.clientY }) }} /></div><div className="markdown-preview markdown-rendered">{markdownPreviewHtml ? <div dangerouslySetInnerHTML={{ __html: markdownPreviewHtml }} /> : <div className="markdown-empty">在左侧输入 Markdown，右侧实时预览。</div>}</div></div> : <MindMapEditor value={selectedNote.content} onChange={(val) => void updateSelectedContent(val)} />}
               </>
             )}
           </>
@@ -2062,7 +2213,7 @@ ${result.filePath}`)
                       <button onMouseDown={preventToolbarMouseDown} title="清除样式" onClick={() => execEditorCommand('removeFormat')}>Tx</button>
                     </div>
                     {selectedImageEl ? <div className="image-mini-toolbar"><span>图片大小</span><button onClick={() => resizeSelectedImage('original')}>原始</button><button onClick={() => resizeSelectedImage(25)}>25%</button><button onClick={() => resizeSelectedImage(50)}>50%</button><button onClick={() => resizeSelectedImage(75)}>75%</button><button onClick={() => resizeSelectedImage(100)}>100%</button><button onClick={() => resizeSelectedImage('fit')}>适应宽度</button></div> : null}
-                    <div ref={vaultEditorRef} className="editor-content vault-rich-editor" contentEditable suppressContentEditableWarning onPaste={handleEditorPaste} onClick={(e) => { handleEditorClick(e); saveEditorSelection() }} onMouseUp={() => { saveEditorSelection(); applyFormatBrushIfNeeded() }} onContextMenu={openEditorContextMenu} onKeyUp={() => saveEditorSelection()} onFocus={() => saveEditorSelection()} onBlur={(e) => { updateVaultDraftPayloadField('notes', e.currentTarget.innerHTML) }} dangerouslySetInnerHTML={{ __html: selectedVaultPayload.notes || '<p></p>' }} />
+                    <div ref={vaultEditorRef} className="editor-content vault-rich-editor" contentEditable suppressContentEditableWarning onPaste={handleEditorPaste} onDragStart={handleEditorDragStart} onDragOver={handleEditorDragOver} onDrop={handleEditorDrop} onDragEnd={handleEditorDragEnd} onClick={(e) => { handleEditorClick(e); saveEditorSelection() }} onMouseUp={() => { saveEditorSelection(); applyFormatBrushIfNeeded() }} onContextMenu={openEditorContextMenu} onKeyUp={() => saveEditorSelection()} onFocus={() => saveEditorSelection()} onBlur={(e) => { updateVaultDraftPayloadField('notes', e.currentTarget.innerHTML) }} dangerouslySetInnerHTML={{ __html: selectedVaultPayload.notes || '<p></p>' }} />
                   </>
                 ) : selectedVaultEntry.entryType === 'login' ? (
                   <div className="vault-form">
